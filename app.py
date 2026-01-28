@@ -81,6 +81,16 @@ def load_resources():
     num_classes = len(le.classes_)
     
     # Load Checkpoint with Architecture Check
+    # AUTOMATIC JOIN: If model is missing but parts exist, join them
+    if not os.path.exists(MODEL_PATH):
+        import glob
+        parts = glob.glob(f"{MODEL_PATH}.part*")
+        if parts:
+            st.info("Reconstructing model from parts... this may take a moment.")
+            from model_manager import join_model
+            join_model(MODEL_PATH)
+            st.success("Model reconstructed successfully!")
+
     try:
         checkpoint = torch.load(MODEL_PATH, map_location=device)
         model_name = "custom"
