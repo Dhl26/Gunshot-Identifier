@@ -115,18 +115,38 @@ def process_audio(audio_file):
     # Load audio
     audio, _ = librosa.load(audio_file, sr=SAMPLE_RATE)
     
-    # Pad or Truncate
-    if len(audio) > SAMPLES_PER_TRACK:
-        audio = audio[:SAMPLES_PER_TRACK]
-    else:
-        padding = SAMPLES_PER_TRACK - len(audio)
-        audio = np.pad(audio, (0, padding), mode='constant')
-        
-    # Spectrogram
-    mel_spectrogram = librosa.feature.melspectrogram(y=audio, sr=SAMPLE_RATE, n_mels=N_MELS)
-    mel_spectrogram_db = librosa.power_to_db(mel_spectrogram, ref=np.max)
+    # SLIDING WINDOW PREDICTION
+    step = int(SAMPLES_PER_TRACK * 0.5) # 50% overlap
+    windows = []
     
-    return audio, mel_spectrogram_db
+    # If audio is shorter than window, just pad it
+    if len(audio) <= SAMPLES_PER_TRACK:
+        padding = SAMPLES_PER_TRACK - len(audio)
+        window = np.pad(audio, (0, padding), mode='constant')
+        windows.append(window)
+    else:
+        # Generate windows
+        for i in range(0, len(audio) - int(SAMPLES_PER_TRACK * 0.5), step):
+            window = audio[i : i + SAMPLES_PER_TRACK]
+            if len(window) < SAMPLES_PER_TRACK:
+                padding = SAMPLES_PER_TRACK - len(window)
+                window = np.pad(window, (0, padding), mode='constant')
+            
+            # Ensure strict length
+            if len(window) == SAMPLES_PER_TRACK:
+                windows.append(window)
+    
+    if not windows:
+        windows.append(np.pad(audio[:SAMPLES_PER_TRACK], (0, max(0, SAMPLES_PER_TRACK - len(audio))), mode='constant'))
+
+    # Process all windows
+    batch_specs = []
+    for win in windows:
+        mel = librosa.feature.melspectrogram(y=win, sr=SAMPLE_RATE, n_mels=N_MELS)
+        mel_db = librosa.power_to_db(mel, ref=np.max)
+        batch_specs.append(mel_db)
+    
+    return audio, np.array(batch_specs)
 
 # --- Main App ---
 def main():
@@ -156,11 +176,11 @@ def main():
             
             try:
                 # Preprocess
-                audio_data, spec_db = process_audio(uploaded_file)
+                audio_data, batch_specs = process_audio(uploaded_file)
                 
                 # Resize and Predict
-                # (1, 1, H, W)
-                spec_tensor = torch.tensor(spec_db, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+                # (Batch, 1, H, W)
+                spec_tensor = torch.tensor(batch_specs, dtype=torch.float32).unsqueeze(1)
                 
                 # Resize to model target size
                 spec_resized = torch.nn.functional.interpolate(
@@ -170,7 +190,10 @@ def main():
                 with torch.no_grad():
                     outputs = model(spec_resized)
                     probabilities = torch.nn.functional.softmax(outputs, dim=1)
-                    confidence, predicted_idx = torch.max(probabilities, 1)
+                    
+                    # MEAN POOLING: Average the probabilities across all time windows
+                    avg_probs = torch.mean(probabilities, dim=0)
+                    confidence, predicted_idx = torch.max(avg_probs, 0)
                 
                 predicted_label = le.inverse_transform([predicted_idx.item()])[0]
                 conf_score = confidence.item() * 100
@@ -195,7 +218,7 @@ def main():
             
             # Probability Chart
             st.markdown("**Probability Distribution**")
-            probs_np = probabilities.cpu().numpy()[0]
+            probs_np = avg_probs.cpu().numpy()
             classes = le.classes_
             
             import pandas as pd
@@ -207,9 +230,14 @@ def main():
             st.bar_chart(df_probs.set_index('Weapon'), color="#FF4B4B")
             
             # Spectrogram Visualization
-            st.markdown("**Mel-Spectrogram**")
+            st.markdown("**Mel-Spectrogram (Full Audio)**")
             fig, ax = plt.subplots(figsize=(10, 4))
-            img = librosa.display.specshow(spec_db, x_axis='time', y_axis='mel', sr=SAMPLE_RATE, ax=ax, cmap='magma')
+            
+            # Compute full spectrogram for visualization
+            full_mel = librosa.feature.melspectrogram(y=audio_data, sr=SAMPLE_RATE, n_mels=N_MELS)
+            full_mel_db = librosa.power_to_db(full_mel, ref=np.max)
+            
+            img = librosa.display.specshow(full_mel_db, x_axis='time', y_axis='mel', sr=SAMPLE_RATE, ax=ax, cmap='magma')
             fig.colorbar(img, ax=ax, format='%+2.0f dB')
             ax.set_title('Mel-frequency Spectrogram')
             # Dark theme for matplotlib plot
