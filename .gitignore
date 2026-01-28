@@ -5,3 +5,5 @@ __pycache__/
 fire arm sounds/
 firearm sounds refined/
 Unconfirmed*.crdownload
+
+!cnn_label_encoder.pkl

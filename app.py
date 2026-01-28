@@ -73,14 +73,6 @@ st.markdown("""
 def load_resources():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-    if not os.path.exists(MODEL_PATH) or not os.path.exists(LABEL_ENCODER_PATH):
-        return None, None, None, None
-
-    # Load Label Encoder
-    le = joblib.load(LABEL_ENCODER_PATH)
-    num_classes = len(le.classes_)
-    
-    # Load Checkpoint with Architecture Check
     # AUTOMATIC JOIN: If model is missing but parts exist, join them
     if not os.path.exists(MODEL_PATH):
         import glob
@@ -91,6 +83,13 @@ def load_resources():
             join_model(MODEL_PATH)
             st.success("Model reconstructed successfully!")
 
+    if not os.path.exists(MODEL_PATH) or not os.path.exists(LABEL_ENCODER_PATH):
+        return None, None, None, None
+
+    # Load Label Encoder
+    le = joblib.load(LABEL_ENCODER_PATH)
+    num_classes = len(le.classes_)
+    
     try:
         checkpoint = torch.load(MODEL_PATH, map_location=device)
         model_name = "custom"
